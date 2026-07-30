@@ -1,33 +1,34 @@
 // ==========================================
 // 🤪 Auto Attack
-// Botva Auto Attack Script
+// Botva Scripts
 // ==========================================
 
-(() => {
+javascript:(function(){
 
 'use strict';
 
 
 // ==========================================
-// Защита от повторного запуска
+// Защита от двойного запуска
 // ==========================================
 
-if (window.AutoAttackRunning) {
+if (window.AutoAttackLoaded) {
 
-    window.AutoAttackStop = true;
+    window.AutoAttackRunning = false;
 
     document
         .getElementById('auto-attack-panel')
         ?.remove();
 
-    console.log('🛑 Auto Attack остановлен');
+    console.log(
+        '🛑 Auto Attack остановлен'
+    );
 
     return;
 }
 
 
-window.AutoAttackRunning = true;
-window.AutoAttackStop = false;
+window.AutoAttackLoaded = true;
 
 
 
@@ -38,171 +39,201 @@ let skippedCount = 0;
 
 
 // ==========================================
-// Стили
+// Стиль панели
 // ==========================================
 
 const style = document.createElement('style');
 
-style.id = 'auto-attack-style';
-
 style.textContent = `
 
-#auto-attack-panel {
+#auto-attack-panel{
 
 position:fixed;
 top:20px;
 right:20px;
 
-width:280px;
-
 background:
 linear-gradient(
 145deg,
-#1b1b1b,
+#151515,
 #333
 );
 
 color:white;
 
-border:
-2px solid #8a6a2f;
+padding:15px 20px;
 
-border-radius:15px;
-
-padding:15px;
-
-z-index:999999;
+border-radius:12px;
 
 font-family:Arial,sans-serif;
 
+z-index:99999;
+
+min-width:270px;
+
 box-shadow:
-0 0 20px rgba(0,0,0,.8);
+0 4px 20px rgba(0,0,0,0.6);
+
+border:
+2px solid #8a6a2f;
 
 }
 
 
-.aa-title {
 
-display:flex;
+#auto-attack-panel h4{
 
-justify-content:space-between;
-
-align-items:center;
-
-font-size:18px;
-
-font-weight:bold;
+margin:0 0 15px 0;
 
 color:#ffd86b;
 
-margin-bottom:12px;
+font-size:17px;
 
 }
 
 
-.aa-close {
+
+#aa-close{
+
+float:right;
 
 cursor:pointer;
 
-color:#ff6666;
+color:#ff5555;
 
-font-size:20px;
+font-size:18px;
 
 }
 
 
-.aa-btn {
+
+.aa-btn{
 
 width:100%;
 
-padding:10px;
+padding:12px;
 
-margin-top:8px;
+border:none;
 
-border:0;
+border-radius:6px;
 
-border-radius:8px;
-
-cursor:pointer;
+font-size:14px;
 
 font-weight:bold;
 
-}
-
-
-.aa-start {
-
-background:#4caf50;
-
-color:white;
-
-}
-
-
-.aa-stop {
-
-background:#d32f2f;
-
-color:white;
-
-}
-
-
-.aa-stats {
-
-background:#111;
-
-padding:10px;
-
-border-radius:8px;
-
-margin-top:10px;
-
-}
-
-
-.aa-row {
-
-display:flex;
-
-justify-content:space-between;
+cursor:pointer;
 
 margin:5px 0;
 
 }
 
 
-.aa-log {
 
-height:100px;
+.aa-start{
 
-overflow:auto;
+background:
+linear-gradient(
+135deg,
+#4CAF50,
+#45a049
+);
 
-background:#090909;
+color:white;
 
-border-radius:8px;
+}
+
+
+
+.aa-stop{
+
+background:
+linear-gradient(
+135deg,
+#f44336,
+#da190b
+);
+
+color:white;
+
+}
+
+
+
+.aa-stats{
+
+margin-top:15px;
+
+padding-top:15px;
+
+border-top:
+1px solid #444;
+
+font-size:12px;
+
+}
+
+
+
+.aa-stats div{
+
+margin:5px 0;
+
+display:flex;
+
+justify-content:space-between;
+
+}
+
+
+
+.aa-log{
+
+max-height:120px;
+
+overflow-y:auto;
 
 margin-top:10px;
 
-padding:8px;
-
 font-size:11px;
 
+background:#1a1a1a;
+
+padding:8px;
+
+border-radius:4px;
+
+}
+
+
+
+.aa-log div{
+
+margin:2px 0;
+
+padding:2px 0;
+
+border-bottom:
+1px solid #222;
+
 }
 
 
-.success {
 
-color:#4caf50;
+.aa-log .success{
+
+color:#4CAF50;
+
+}
+
+
+
+.aa-log .skip{
+
+color:#FFC107;
 
 }
 
 
-.skip {
-
-color:#ffc107;
-
-}
 
 `;
 
@@ -225,53 +256,79 @@ panel.id =
 
 
 
-panel.innerHTML = `
+panel.innerHTML =
 
-<div class="aa-title">
+`
 
+<h4>
 🤪 Auto Attack
 
-<span class="aa-close">
+<span id="aa-close">
 ✕
+</span>
+
+</h4>
+
+
+<button id="aa-toggle"
+class="aa-btn aa-start">
+
+▶ СТАРТ
+
+</button>
+
+
+<div class="aa-stats">
+
+<div>
+
+<span>
+Атаковано:
+</span>
+
+<span id="aa-attacked">
+0
 </span>
 
 </div>
 
 
+<div>
 
-<button id="aa-toggle"
-class="aa-btn aa-start">
-▶ СТАРТ
-</button>
+<span>
+Пропущено:
+</span>
 
-
-
-<div class="aa-stats">
-
-<div class="aa-row">
-<span>⚔️ Атаковано</span>
-<b id="aa-attacked">0</b>
-</div>
-
-
-<div class="aa-row">
-<span>⏰ Пропущено</span>
-<b id="aa-skipped">0</b>
-</div>
-
-
-<div class="aa-row">
-<span>🎯 Целей</span>
-<b id="aa-total">0</b>
-</div>
+<span id="aa-skipped">
+0
+</span>
 
 </div>
 
 
+<div>
 
-<div id="aa-log"
-class="aa-log">
+<span>
+Всего:
+</span>
+
+<span id="aa-total">
+0
+</span>
+
+</div>
+
+
+</div>
+
+
+<div class="aa-log"
+id="aa-log">
+
+<em style="color:#666">
 Лог...
+</em>
+
 </div>
 
 `;
@@ -279,8 +336,6 @@ class="aa-log">
 
 
 document.body.appendChild(panel);
-
-
 
 
 
@@ -296,73 +351,20 @@ document.getElementById(
 );
 
 
-
-const close =
-document.querySelector(
-'.aa-close'
+const closeBtn =
+document.getElementById(
+'aa-close'
 );
 
 
 
 
 
-function logMsg(text,type='') {
+closeBtn.onclick=function(){
 
-const div =
-document.createElement('div');
+    isRunning=false;
 
-div.className =
-type;
-
-div.textContent =
-'['+
-new Date().toLocaleTimeString()
-+
-'] '
-+
-text;
-
-
-log.prepend(div);
-
-
-
-while(log.children.length>50){
-
-log.removeChild(
-log.lastChild
-);
-
-}
-
-}
-
-
-
-
-
-function updateStats(){
-
-document.getElementById(
-'aa-attacked'
-).textContent =
-attackedCount;
-
-
-document.getElementById(
-'aa-skipped'
-).textContent =
-skippedCount;
-
-}
-// ==========================================
-// Кнопка закрытия
-// ==========================================
-
-close.onclick = () => {
-
-    window.AutoAttackStop = true;
-    window.AutoAttackRunning = false;
+    window.AutoAttackLoaded=false;
 
     panel.remove();
 
@@ -374,80 +376,142 @@ close.onclick = () => {
 
 
 
-// ==========================================
-// Задержка
-// ==========================================
+
+
+function logMsg(msg,type){
+
+    const div =
+    document.createElement('div');
+
+
+    div.className =
+    type;
+
+
+    div.textContent =
+    '['+
+    new Date().toLocaleTimeString()
+    +
+    '] '
+    +
+    msg;
+
+
+
+    if(
+        log.querySelector('em')
+    ){
+
+        log.innerHTML='';
+
+    }
+
+
+
+    log.insertBefore(
+        div,
+        log.firstChild
+    );
+
+
+
+    while(
+        log.children.length>50
+    ){
+
+        log.removeChild(
+            log.lastChild
+        );
+
+    }
+
+}
+
+
+
+
+function updateStats(){
+
+    document.getElementById(
+        'aa-attacked'
+    ).textContent =
+    attackedCount;
+
+
+    document.getElementById(
+        'aa-skipped'
+    ).textContent =
+    skippedCount;
+
+}
+
+
+
 
 function getRandomDelay(){
 
     return 30 + Math.random()*70;
 
 }
-
-
-
 // ==========================================
-// Атака
+// Атака (оригинальная логика)
 // ==========================================
 
-async function performAttack(form,name){
-
-
-    const charId =
-    form.querySelector(
-        'input[name="char_id"]'
-    )?.value || '?';
-
-
+async function performAttack(form, name) {
 
     const formData =
-    new FormData(form);
-
-
+        new FormData(form);
 
     try {
 
-
         const response =
-        await fetch(
-            form.action || location.href,
-            {
-                method:'POST',
-                body:formData
-            }
-        );
+            await fetch(
+                form.action,
+                {
+                    method:'POST',
+                    body:formData
+                }
+            );
 
 
-
-        if(response.ok){
+        if (response.ok) {
 
 
             attackedCount++;
 
 
             logMsg(
-                '⚔️ Атака: '+
-                name+
-                ' (ID '+charId+')',
+                '✅ ' + name,
                 'success'
             );
 
 
+
+            const submitBtn =
+                form.querySelector(
+                    'input[type="submit"]'
+                );
+
+
+            if (submitBtn) {
+
+                submitBtn.value = '⚔️';
+
+                submitBtn.disabled = true;
+
+                submitBtn.style.background = '#666';
+
+            }
+
         }
 
 
-    }
-    catch(error){
+    } catch(error) {
 
 
-        logMsg(
-            '❌ Ошибка: '+name,
-            'skip'
-        );
-
+        // ошибки игнорируем как было
 
     }
-
 
 
     updateStats();
@@ -457,105 +521,91 @@ async function performAttack(form,name){
 
 
 
+
+
 // ==========================================
-// Основной запуск
+// Основной цикл
 // ==========================================
 
-async function run(){
+async function run() {
 
 
-    if(isRunning)
+    if (!isRunning)
         return;
 
 
 
-    isRunning = true;
-
-
-    logMsg(
-        '🚀 Поиск целей...'
-    );
-
-
-
     const forms =
-    document.querySelectorAll(
-        'form[action="shtab.php"]'
-    );
+        document.querySelectorAll(
+            'form[action="shtab.php"]'
+        );
 
 
 
     document.getElementById(
         'aa-total'
     ).textContent =
-    forms.length;
+        forms.length;
 
 
 
-    for(const form of forms){
+
+    for (const form of forms) {
 
 
-        if(
-            window.AutoAttackStop
-        )
-        break;
 
+        if (!isRunning)
+            break;
 
 
 
         const charId =
-        form.querySelector(
-            'input[name="char_id"]'
-        )?.value;
+            form.querySelector(
+                'input[name="char_id"]'
+            )?.value;
 
 
 
         const name =
-        form.closest('tr')
-        ?.querySelector('.profile')
-        ?.textContent
-        ?.trim()
-        ||
-        'ID:'+charId;
+            form.closest('tr')
+            ?.querySelector('.profile')
+            ?.textContent
+            ?.trim()
+            ||
+            'ID:' + charId;
 
 
 
         const submitBtn =
-        form.querySelector(
-            'input[type="submit"]'
-        );
+            form.querySelector(
+                'input[type="submit"]'
+            );
 
 
 
-        if(
-            submitBtn?.disabled
-        ){
-
+        if (submitBtn?.disabled)
             continue;
-
-        }
 
 
 
 
         const timer =
-        document.getElementById(
-            't_'+charId
-        );
+            document.getElementById(
+                't_' + charId
+            );
 
 
 
 
-        if(timer){
+        if (timer) {
+
 
 
             skippedCount++;
 
 
             logMsg(
-                '⏰ Таймер: '+
-                name+
-                ' (ID '+charId+')',
+                '⏰ ' + name,
                 'skip'
             );
 
@@ -563,8 +613,8 @@ async function run(){
             updateStats();
 
 
-        }
-        else {
+
+        } else {
 
 
             await performAttack(
@@ -577,9 +627,9 @@ async function run(){
 
 
 
-        if(
-            !window.AutoAttackStop
-        ){
+
+        if (isRunning) {
+
 
             await new Promise(
                 r =>
@@ -589,6 +639,7 @@ async function run(){
                 )
             );
 
+
         }
 
 
@@ -596,22 +647,30 @@ async function run(){
 
 
 
-    isRunning=false;
+
+    if (isRunning) {
+
+
+        logMsg(
+            '🏁 Готово!',
+            ''
+        );
+
+
+        isRunning = false;
 
 
 
-    btn.textContent =
-    '▶ СТАРТ';
-
-
-    btn.className =
-    'aa-btn aa-start';
+        btn.textContent =
+            '▶ СТАРТ';
 
 
 
-    logMsg(
-        '🏁 Готово'
-    );
+        btn.className =
+            'aa-btn aa-start';
+
+
+    }
 
 
 }
@@ -619,62 +678,67 @@ async function run(){
 
 
 
-// ==========================================
-// Кнопка старт
-// ==========================================
-
-btn.onclick = () => {
-
-
-    if(
-        isRunning
-    )
-    return;
-
-
-
-    window.AutoAttackStop=false;
-
-
-
-    btn.textContent =
-    '⏹ СТОП';
-
-
-
-    btn.className =
-    'aa-btn aa-stop';
-
-
-
-    run();
-
-
-};
-
-
 
 
 // ==========================================
-// Стоп через кнопку
+// Кнопка старт/стоп
 // ==========================================
 
 btn.addEventListener(
-'contextmenu',
-e=>{
+    'click',
+    function() {
 
-    e.preventDefault();
 
-    window.AutoAttackStop=true;
+        isRunning =
+            !isRunning;
 
-});
+
+
+        if (isRunning) {
+
+
+
+            btn.textContent =
+                '⏹ СТОП';
+
+
+
+            btn.className =
+                'aa-btn aa-stop';
+
+
+
+            run();
+
+
+
+        } else {
+
+
+
+            btn.textContent =
+                '▶ СТАРТ';
+
+
+
+            btn.className =
+                'aa-btn aa-start';
+
+
+        }
+
+
+    }
+);
+
 
 
 
 
 console.log(
-    '🤪 Auto Attack готов!'
+    '🤪 Auto Attack готов! СТАРТ на панели.'
 );
+
 
 
 })();
