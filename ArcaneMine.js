@@ -1,331 +1,509 @@
+(async()=>{
+
 // ==========================================
 // ArcaneMine.js
 // Botva Arcane Mine Auto Runner
 // ==========================================
 
-(() => {
 
-    // Защита от двойного запуска
-    if (window.ArcaneMineRunning) {
-        window.ArcaneMineStop = true;
-        console.log("🛑 ArcaneMine остановлен");
-        return;
-    }
+if(window.ArcaneMineRunning){
 
-    window.ArcaneMineRunning = true;
-    window.ArcaneMineStop = false;
+    window.ArcaneMineStop = true;
+
+    console.log("🛑 ArcaneMine остановлен");
+
+    return;
+}
 
 
-    let floors = 0;
-    let monsters = 0;
-    const startTime = Date.now();
+window.ArcaneMineRunning = true;
+window.ArcaneMineStop = false;
 
 
-    function sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
+let floors = 0;
+let monsters = 0;
 
 
-    function prepareForms() {
-        document.querySelectorAll('form').forEach(form => {
-            form.classList.remove(
-                'submit_by_ajax',
-                'submit_by_ajax_completed'
-            );
-        });
-    }
+function sleep(ms){
+
+    return new Promise(
+        resolve => setTimeout(resolve, ms)
+    );
+
+}
 
 
-    // Отправка формы без перезагрузки страницы
-    function ajaxSubmit(form, submitter = null) {
 
-        return new Promise(resolve => {
+function prepareForms(){
 
-            const xhr = new XMLHttpRequest();
+    document.querySelectorAll('form')
+    .forEach(form=>{
 
-            xhr.open(
-                'POST',
-                form.action || location.href,
-                true
-            );
+        form.classList.remove(
+            'submit_by_ajax',
+            'submit_by_ajax_completed'
+        );
 
-            xhr.setRequestHeader(
-                'Content-Type',
-                'application/x-www-form-urlencoded; charset=UTF-8'
-            );
+    });
+
+}
 
 
-            xhr.onload = function () {
-
-                if (xhr.status >= 200 && xhr.status < 300) {
-
-                    const parser = new DOMParser();
-
-                    const responseDocument =
-                        parser.parseFromString(
-                            xhr.responseText,
-                            'text/html'
-                        );
 
 
-                    const newContent =
-                        responseDocument.getElementById('content');
 
-                    const currentContent =
-                        document.getElementById('content');
+function ajaxSubmit(form, submitter=null){
 
-
-                    if (newContent && currentContent) {
-
-                        currentContent.innerHTML =
-                            newContent.innerHTML;
-
-                        prepareForms();
-
-                    }
-
-                }
-
-                resolve();
-
-            };
+return new Promise(resolve=>{
 
 
-            xhr.onerror = function () {
-
-                console.error(
-                    "❌ Ошибка соединения"
-                );
-
-                resolve();
-
-            };
+    const xhr = new XMLHttpRequest();
 
 
-            const formData =
-                new FormData(form);
+    xhr.open(
+        'POST',
+        form.action || location.href,
+        true
+    );
 
 
-            if (submitter && submitter.name) {
-
-                formData.set(
-                    submitter.name,
-                    submitter.value
-                );
-
-            }
+    xhr.setRequestHeader(
+        'Content-Type',
+        'application/x-www-form-urlencoded; charset=UTF-8'
+    );
 
 
-            xhr.send(
-                new URLSearchParams(formData).toString()
+
+    xhr.onload = function(){
+
+
+        const parser =
+            new DOMParser();
+
+
+        const responseDocument =
+            parser.parseFromString(
+                xhr.responseText,
+                'text/html'
             );
 
-        });
-
-    }
 
 
+        const newContent =
+            responseDocument.getElementById(
+                'content'
+            );
 
-    // Панель статистики
-    function createPanel() {
 
-        let panel =
+        const currentContent =
             document.getElementById(
-                "arcane-panel"
+                'content'
             );
 
 
-        if (!panel) {
 
-            panel =
-                document.createElement(
-                    "div"
-                );
+        if(
+            newContent &&
+            currentContent
+        ){
 
-            panel.id =
-                "arcane-panel";
-
-
-            panel.style.cssText =
-                `
-                position:fixed;
-                top:20px;
-                right:20px;
-                z-index:999999;
-                background:#222;
-                color:#fff;
-                padding:15px;
-                border-radius:10px;
-                font-size:14px;
-                font-family:Arial;
-                box-shadow:0 0 10px #000;
-                `;
+            currentContent.innerHTML =
+                newContent.innerHTML;
 
 
-            document.body.appendChild(panel);
+            prepareForms();
 
         }
 
 
-        panel.innerHTML = `
-
-        ⛏️ <b>ArcaneMine</b><br>
-        ─────────────<br>
-        Статус: 🟢 работает<br>
-        Этажи: ${floors}<br>
-        Монстры: ${monsters}<br>
-        Время:
-        ${Math.floor(
-            (Date.now()-startTime)/1000
-        )} сек
-
-        <br><br>
-
-        <button id="arcane-stop">
-        🛑 Остановить
-        </button>
-
-        `;
 
 
-        document
-            .getElementById("arcane-stop")
-            .onclick = () => {
+        // обновляем навигацию
 
-                window.ArcaneMineStop = true;
-
-            };
-
-    }
+        const newNavigation =
+            responseDocument.getElementById(
+                'navigation'
+            );
 
 
-
-    async function run() {
-
-
-        console.log(
-            "⛏️ ArcaneMine запущен"
-        );
+        const currentNavigation =
+            document.getElementById(
+                'navigation'
+            );
 
 
-        while (
-            !window.ArcaneMineStop
-        ) {
+        if(
+            newNavigation &&
+            currentNavigation
+        ){
 
-
-            createPanel();
-
-
-
-            // Ищем монстров
-
-            const monsterButton =
-                document.querySelector(
-                    'input[value="arcane_hit"]'
-                );
-
-
-            if (monsterButton) {
-
-
-                const form =
-                    monsterButton.closest(
-                        "form"
-                    );
-
-
-                if (form) {
-
-
-                    await ajaxSubmit(
-                        form,
-                        monsterButton
-                    );
-
-
-                    monsters++;
-
-
-                    await sleep(150);
-
-                    continue;
-
-                }
-
-            }
-
-
-
-
-            // Переход дальше
-
-            const nextButton =
-                document.querySelector(
-                    'input[value="arcane_gonext"]'
-                );
-
-
-            if (nextButton) {
-
-
-                const form =
-                    nextButton.closest(
-                        "form"
-                    );
-
-
-                if (form) {
-
-
-                    floors++;
-
-
-                    await ajaxSubmit(
-                        form,
-                        nextButton
-                    );
-
-
-                    await sleep(150);
-
-                    continue;
-
-                }
-
-            }
-
-
-
-
-            // Ждем появления действий
-
-            await sleep(500);
+            currentNavigation.outerHTML =
+                newNavigation.outerHTML;
 
         }
 
 
 
-        window.ArcaneMineRunning =
-            false;
+        resolve();
+
+    };
 
 
-        document
-            .getElementById(
-                "arcane-panel"
-            )
-            ?.remove();
 
+    xhr.onerror=function(){
 
         console.log(
-            "🛑 ArcaneMine завершил работу"
+            "❌ Ошибка соединения"
         );
 
+        resolve();
+
+    };
+
+
+
+    const formData =
+        new FormData(form);
+
+
+
+    if(
+        submitter &&
+        submitter.name
+    ){
+
+        formData.set(
+            submitter.name,
+            submitter.value
+        );
 
     }
 
 
 
-    run();
+    xhr.send(
+        new URLSearchParams(formData).toString()
+    );
+
+
+});
+
+
+}
+
+
+
+
+
+
+
+
+async function runCommand(command){
+
+
+const form =
+[...document.querySelectorAll('form')]
+.find(
+    f =>
+    f.querySelector(
+        `input[name="do_cmd"][value="${command}"]`
+    )
+);
+
+
+
+if(!form){
+
+    console.log(
+        "❌ Команда не найдена:",
+        command
+    );
+
+    return false;
+
+}
+
+
+
+const button =
+form.querySelector(
+    'input[type="submit"]'
+);
+
+
+
+console.log(
+    "▶ Выполняю:",
+    command
+);
+
+
+
+await ajaxSubmit(
+    form,
+    button
+);
+
+
+await sleep(500);
+
+
+return true;
+
+
+}
+
+
+
+
+
+
+
+
+
+function createPanel(){
+
+let panel =
+document.getElementById(
+    "arcane-panel"
+);
+
+
+if(!panel){
+
+    panel =
+    document.createElement(
+        "div"
+    );
+
+
+    panel.id =
+    "arcane-panel";
+
+
+    panel.style.cssText =
+    `
+    position:fixed;
+    top:20px;
+    right:20px;
+    z-index:999999;
+    background:#222;
+    color:white;
+    padding:15px;
+    border-radius:10px;
+    font:14px Arial;
+    `;
+
+
+    document.body.appendChild(panel);
+
+}
+
+
+
+panel.innerHTML =
+`
+⛏️ <b>ArcaneMine</b><br>
+Этажи: ${floors}<br>
+Монстры: ${monsters}<br><br>
+
+<button id="arc-stop">
+🛑 Стоп
+</button>
+`;
+
+
+
+document.getElementById(
+    "arc-stop"
+).onclick=()=>{
+
+    window.ArcaneMineStop=true;
+
+};
+
+
+}
+
+
+
+
+
+
+
+
+
+console.log(
+    "⛏️ ArcaneMine старт"
+);
+
+
+
+// вход
+
+await runCommand(
+    "start_arcane"
+);
+
+
+
+while(
+    !window.ArcaneMineStop
+){
+
+
+createPanel();
+
+
+
+
+// бой
+
+const hit =
+document.querySelector(
+    'input[value="arcane_hit"]'
+);
+
+
+if(hit){
+
+
+const form =
+hit.closest('form');
+
+
+await ajaxSubmit(
+    form,
+    hit
+);
+
+
+monsters++;
+
+
+console.log(
+    "⚔ Монстр:",
+    monsters
+);
+
+
+await sleep(500);
+
+
+continue;
+
+}
+
+
+
+
+
+// этаж
+
+const next =
+document.querySelector(
+    'input[value="arcane_gonext"]'
+);
+
+
+
+if(next){
+
+
+const form =
+next.closest('form');
+
+
+await ajaxSubmit(
+    form,
+    next
+);
+
+
+floors++;
+
+
+console.log(
+    "🏰 Этаж:",
+    floors
+);
+
+
+await sleep(500);
+
+
+continue;
+
+}
+
+
+
+
+
+// выход
+
+const stopForm =
+[...document.querySelectorAll('form')]
+.find(
+    f =>
+    f.querySelector(
+        'input[name="do_cmd"][value="stop_arcane"]'
+    )
+);
+
+
+
+if(stopForm){
+
+
+console.log(
+    "🚪 Выход из шахты"
+);
+
+
+
+await ajaxSubmit(
+    stopForm,
+    stopForm.querySelector(
+        'input[type="submit"]'
+    )
+);
+
+
+
+break;
+
+
+}
+
+
+
+await sleep(500);
+
+
+}
+
+
+
+
+
+document.getElementById(
+    "arcane-panel"
+)?.remove();
+
+
+
+window.ArcaneMineRunning=false;
+
+
+
+console.log(
+    "🛑 ArcaneMine завершён",
+    {
+        floors,
+        monsters
+    }
+);
 
 
 
