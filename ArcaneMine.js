@@ -245,7 +245,7 @@ await ajaxSubmit(
 );
 
 
-await sleep(500);
+await sleep(150);
 
 
 return true;
@@ -387,7 +387,7 @@ console.log(
 );
 
 
-await sleep(500);
+await sleep(150);
 
 
 continue;
@@ -429,7 +429,7 @@ console.log(
 );
 
 
-await sleep(500);
+await sleep(150);
 
 
 continue;
@@ -478,7 +478,7 @@ break;
 
 
 
-await sleep(500);
+await sleep(150);
 
 
 }
