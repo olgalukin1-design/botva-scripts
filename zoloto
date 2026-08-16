@@ -1,0 +1,143 @@
+/* Ботва: качать по 9 999 999 каждый раз — для консоли (быстро, 20мс, шире окно) */
+(function(){
+  const MAX = 9999999;
+  const DELAY = 20;
+  const STATS = [
+    {key:'power',     name:'Сила',       color:'#e74c3c'},
+    {key:'block',     name:'Защита',     color:'#3498db'},
+    {key:'dexterity', name:'Ловкость',   color:'#2ecc71'},
+    {key:'endurance', name:'Масса',      color:'#f39c12'},
+    {key:'charisma',  name:'Мастерство', color:'#9b59b6'}
+  ];
+  if(!document.querySelector('.training_power,.training_block')){console.warn('Это не страница прокачки!');return;}
+  if(window.__bq) document.getElementById('bq_panel_root')?.remove();
+
+  const css=`
+#bq_panel_root{position:fixed;top:80px;right:18px;z-index:2147483000;font-family:'Segoe UI',Tahoma,sans-serif;box-shadow:0 14px 40px rgba(0,0,0,.55)}
+#bq_panel{width:420px;background:linear-gradient(160deg,#1b2735,#0d1520);border:1px solid #3a5a82;border-radius:14px;overflow:hidden;color:#e8eef5}
+.bq_head{padding:11px 16px;background:linear-gradient(90deg,#26405f,#1b2735);display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #3a5a82;cursor:move;user-select:none}
+.bq_head h3{margin:0;font-size:15px;letter-spacing:.3px}
+.bq_head .bq_close{cursor:pointer;font-size:22px;line-height:1;color:#9fb3c8;transition:.15s}
+.bq_head .bq_close:hover{color:#fff;transform:rotate(90deg)}
+.bq_body{padding:14px 16px 16px}
+.bq_label{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:#8fa4ba;margin:0 0 8px}
+.bq_stats{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-bottom:14px}
+.bq_stat{display:flex;flex-direction:column;align-items:center;gap:5px;padding:9px 6px;border:1px solid #2c4055;border-radius:9px;cursor:pointer;transition:.15s;background:rgba(255,255,255,.02);text-align:center}
+.bq_stat:hover{border-color:#4a78ad;background:rgba(74,120,173,.12)}
+.bq_stat.sel{border-color:#5fa0e0;background:rgba(95,160,224,.18);box-shadow:0 0 0 1px #5fa0e0 inset}
+.bq_stat .dot{width:14px;height:14px;border-radius:50%;flex:0 0 auto}
+.bq_stat .nm{font-size:12px;font-weight:600}
+.bq_stat .vl{font-size:11px;color:#9fb3c8;font-variant-numeric:tabular-nums}
+.bq_max{width:100%;padding:10px;border:1px solid #2c4055;border-radius:9px;background:#0a1118;color:#5fa0e0;font-size:14px;font-weight:700;text-align:center;margin-bottom:13px;letter-spacing:.5px}
+.bq_max b{color:#fff;font-size:18px}
+.bq_counter{font-size:12px;color:#9fb3c8;text-align:center;margin-bottom:10px}
+.bq_counter b{color:#5fa0e0}
+.bq_row{display:flex;gap:8px}
+.bq_run{flex:1;padding:13px;border:none;border-radius:9px;cursor:pointer;font-size:15px;font-weight:700;letter-spacing:.4px;color:#fff;background:linear-gradient(180deg,#27ae60,#1e8c4a);transition:.15s}
+.bq_run:hover{filter:brightness(1.08)}
+.bq_run:disabled{opacity:.5;cursor:not-allowed}
+.bq_stop{flex:1;padding:13px;border:none;border-radius:9px;cursor:pointer;font-size:15px;font-weight:700;letter-spacing:.4px;color:#fff;background:linear-gradient(180deg,#e74c3c,#c0392b);transition:.15s;display:none}
+.bq_stop:hover{filter:brightness(1.08)}
+.bq_stop.show{display:block}
+.bq_log{margin-top:10px;max-height:90px;overflow:auto;font-size:11px;line-height:1.5;background:#0a1118;border:1px solid #2c4055;border-radius:8px;padding:7px 10px;color:#9fb3c8;display:none}
+.bq_log.show{display:block}
+.bq_log p{margin:0}.bq_log p.ok{color:#2ecc71}.bq_log p.err{color:#e74c3c}.bq_log p.inf{color:#5fa0e0}`;
+  let st=document.createElement('style');st.textContent=css;document.head.appendChild(st);
+
+  let sel='power',running=false,stopReq=false,steps=0;
+  const root=document.createElement('div');root.id='bq_panel_root';
+  const cv=k=>{const el=document.querySelector('.avatar_stat_'+k);return el?el.textContent.trim():'?';};
+
+  root.innerHTML=`<div id="bq_panel" role="dialog">
+  <div class="bq_head" id="bq_drag"><h3>⚡ Прокачка на максимум</h3><span class="bq_close">×</span></div>
+  <div class="bq_body">
+    <div class="bq_label">Характеристика</div>
+    <div class="bq_stats" id="bq_stats"></div>
+    <div class="bq_max">Каждый шаг: <b>+9 999 999</b></div>
+    <div class="bq_counter" id="bq_counter">Шагов: <b>0</b> · Влито: <b>0</b></div>
+    <div class="bq_row">
+      <button class="bq_run" id="bq_run">🚀 Качать по 9 999 999</button>
+      <button class="bq_stop" id="bq_stop">⛔ Стоп</button>
+    </div>
+    <div class="bq_log" id="bq_log"></div>
+  </div></div>`;
+  document.body.appendChild(root);window.__bq=root;
+
+  // перетаскивание
+  const head=root.querySelector('#bq_drag');
+  let dragging=false,ox=0,oy=0;
+  head.addEventListener('mousedown',e=>{if(e.target.classList.contains('bq_close'))return;dragging=true;const r=root.getBoundingClientRect();ox=e.clientX-r.left;oy=e.clientY-r.top;root.style.right='auto';root.style.left=r.left+'px';root.style.top=r.top+'px';e.preventDefault();});
+  document.addEventListener('mousemove',e=>{if(!dragging)return;root.style.left=Math.max(0,e.clientX-ox)+'px';root.style.top=Math.max(0,e.clientY-oy)+'px';});
+  document.addEventListener('mouseup',()=>dragging=false);
+
+  const sb=root.querySelector('#bq_stats');
+  STATS.forEach(s=>{
+    const d=document.createElement('div');d.className='bq_stat'+(s.key===sel?' sel':'');d.dataset.k=s.key;
+    d.innerHTML=`<span class="dot" style="background:${s.color}"></span><span class="nm">${s.name}</span><span class="vl" data-vl="${s.key}">${cv(s.key)}</span>`;
+    d.onclick=()=>{if(running)return;sel=s.key;sb.querySelectorAll('.bq_stat').forEach(x=>x.classList.toggle('sel',x.dataset.k===s.key));};
+    sb.appendChild(d);
+  });
+  root.querySelector('.bq_close').onclick=()=>{if(!running)root.remove();};
+
+  function log(m,t){const b=root.querySelector('#bq_log');b.classList.add('show');const p=document.createElement('p');p.className=t||'inf';p.textContent=`[${new Date().toLocaleTimeString()}] ${m}`;b.appendChild(p);b.scrollTop=b.scrollHeight;}
+  function setCounter(){const total=steps*MAX;root.querySelector('#bq_counter').innerHTML='Шагов: <b>'+steps+'</b> · Влито: <b>'+total.toLocaleString()+'</b>';}
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+
+  // жёстко выставить 9999999 в видимое И скрытое поле (именно скрытое уходит на сервер)
+  function setAmt(k,a){
+    const inp=document.getElementById(k);
+    if(inp){inp.setAttribute('maxlength','7');inp.maxLength=7;inp.value=a;}
+    const hidden=document.querySelector('input[name="gold_'+k+'"]');
+    if(hidden) hidden.value=a;
+    if(typeof change==='function'){try{change(k,0,a);}catch(e){}}
+    // ПОСЛЕ change() игра может перезаписать скрытое поле обратно — ставим ЕЩЁ РАЗ
+    if(hidden) hidden.value=a;
+    if(inp) inp.value=a;
+  }
+  function getHidden(k){return document.querySelector('input[name="gold_'+k+'"]');}
+
+  function clickImprove(k){
+    const f=document.querySelector('.training_'+k+' form');
+    if(!f) return false;
+    let btn=f.querySelector('input[type="submit"][value="УЛУЧШИТЬ"]');
+    if(btn && !btn.disabled){try{btn.click();return true;}catch(e){}}
+    const sub=f.querySelector('input[type="submit"], button[type="submit"], .button_new');
+    if(sub){try{sub.click();return true;}catch(e){}}
+    return false;
+  }
+  function updateCard(k){const vl=root.querySelector('.vl[data-vl="'+k+'"]');if(vl)vl.textContent=cv(k);}
+
+  root.querySelector('#bq_stop').onclick=()=>{stopReq=true;log('Останавливаюсь…','inf');};
+
+  root.querySelector('#bq_run').onclick=async()=>{
+    if(running)return;
+    const k=sel,nm=STATS.find(s=>s.key===k).name;
+    running=true;stopReq=false;steps=0;setCounter();
+    const runBtn=root.querySelector('#bq_run'),stopBtn=root.querySelector('#bq_stop');
+    runBtn.disabled=true;runBtn.textContent='⏳ Качаем…';stopBtn.classList.add('show');
+    log(`Старт: ${nm}, по ${MAX.toLocaleString()} КАЖДЫЙ шаг, пауза ${DELAY}мс`,'inf');
+
+    STATS.forEach(s=>{const i=document.getElementById(s.key);if(i){i.setAttribute('maxlength','7');i.maxLength=7;}});
+
+    while(!stopReq){
+      setAmt(k,MAX);
+      await wait(15);
+      const h=getHidden(k);
+      if(h && +h.value !== MAX){h.value=MAX;const inp=document.getElementById(k);if(inp)inp.value=MAX;await wait(10);}
+      const clicked=clickImprove(k);
+      if(!clicked){log(`Кнопка «УЛУЧШИТЬ» не найдена на шаге ${steps+1} — стоп`,'err');break;}
+      steps++;setCounter();
+      updateCard(k);
+      if(steps%10===0 || steps<=3) log(`Шаг ${steps}: +${MAX.toLocaleString()} → ${nm} (всего ${(steps*MAX).toLocaleString()})`,'ok');
+      await wait(DELAY);
+    }
+
+    running=false;runBtn.disabled=false;runBtn.textContent='🚀 Качать по 9 999 999';stopBtn.classList.remove('show');
+    log(stopReq?`Остановлено. Шагов: ${steps}, влито ${(steps*MAX).toLocaleString()}`:`Готово. Шагов: ${steps}, влито ${(steps*MAX).toLocaleString()}`,'inf');
+    updateCard(k);
+    console.log(`✅ ${nm}: ${steps} шагов по ${MAX}, всего ${steps*MAX}`);
+  };
+
+  STATS.forEach(s=>{const i=document.getElementById(s.key);if(i){i.setAttribute('maxlength','7');i.maxLength=7;}});
+  console.log('⚡ Готово. Жми «Качать по 9 999 999» — каждый шаг по 9 999 999, пауза 20мс.');
+})();
