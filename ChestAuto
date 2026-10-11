@@ -1,0 +1,731 @@
+
+(() => {
+  'use strict';
+
+  const KEY = 'botva_chest_auto_v3';
+  const CLICK_TIMEOUT = 4000;
+  const UNLOCK_TIMEOUT = 8000;
+
+  // Удаляем старую панель, если она осталась.
+  document.getElementById('bch-root')?.remove();
+  document.getElementById('bch-tab')?.remove();
+  document.getElementById('bch-v3-style')?.remove();
+
+  // Предыдущая версия скрипта должна быть остановлена
+  // обновлением страницы перед запуском этой версии.
+  if (window.BotvaChestAutoV3) {
+    console.log('[BotvaChest] Скрипт уже запущен');
+    return;
+  }
+  window.BotvaChestAutoV3 = true;
+
+  let config = {};
+  try {
+    config = JSON.parse(localStorage.getItem(KEY) || '{}');
+  } catch {}
+
+  let running = false;
+  let paused = false;
+  let completed = 0;
+  let limit = 5;
+  let phase = 'idle';
+  let phaseAt = 0;
+  let timer = null;
+  let lastPrize = '';
+
+  // Запрет автоматического повторного запуска.
+  let autoArmed = false;
+  let popupWasOpen = false;
+
+  const css = `
+    #bch-root {
+      position:fixed;
+      top:20px;
+      right:20px;
+      width:335px;
+      z-index:2147483647;
+      background:linear-gradient(155deg,#202e49,#101827);
+      color:#f4f7ff;
+      font:13px/1.45 Arial,sans-serif;
+      border:1px solid #455c7e;
+      border-radius:16px;
+      box-shadow:0 15px 50px #0009;
+      overflow:hidden;
+    }
+    #bch-root * {box-sizing:border-box}
+    #bch-head {
+      display:flex;
+      align-items:center;
+      gap:9px;
+      padding:14px;
+      background:linear-gradient(90deg,#30466b,#25324d);
+      cursor:move;
+      user-select:none;
+    }
+    #bch-head strong {font-size:15px}
+    #bch-head small {
+      display:block;
+      font-size:11px;
+      color:#bed0eb;
+    }
+    #bch-head .spacer {flex:1}
+    #bch-head button {
+      background:#ffffff20;
+      color:white;
+      border:0;
+      border-radius:6px;
+      padding:5px 9px;
+      cursor:pointer;
+    }
+    #bch-body {padding:14px}
+    #bch-root.minimized #bch-body {display:none}
+    #bch-root label {
+      display:block;
+      color:#c3d0e7;
+      margin:9px 0 5px;
+      font-size:12px;
+    }
+    #bch-root select,
+    #bch-root input[type=number] {
+      width:100%;
+      background:#111b2e;
+      color:white;
+      border:1px solid #4a6082;
+      border-radius:8px;
+      padding:9px;
+    }
+    #bch-row {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:10px;
+    }
+    #bch-actions {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px;
+      margin:13px 0;
+    }
+    #bch-actions button {
+      border:0;
+      border-radius:9px;
+      padding:11px 6px;
+      font-weight:bold;
+      color:white;
+      cursor:pointer;
+    }
+    #bch-start {background:#228a5d}
+    #bch-pause {background:#386fae}
+    #bch-stop {background:#b43f50}
+    #bch-once {background:#4b5872}
+    #bch-actions button:disabled {
+      opacity:.45;
+      cursor:not-allowed;
+    }
+    #bch-status {
+      background:#17253d;
+      border:1px solid #405371;
+      border-radius:10px;
+      padding:11px;
+      margin-top:12px;
+    }
+    #bch-state {
+      font-weight:bold;
+      color:#91d5ff;
+    }
+    #bch-counter {
+      font-size:25px;
+      font-weight:bold;
+      margin-top:4px;
+    }
+    #bch-progress {
+      height:7px;
+      background:#0c1422;
+      border-radius:10px;
+      margin-top:9px;
+      overflow:hidden;
+    }
+    #bch-progress-fill {
+      height:100%;
+      width:0%;
+      background:linear-gradient(90deg,#4c9bf5,#60dfad);
+      transition:width .25s;
+    }
+    #bch-log {
+      height:115px;
+      overflow:auto;
+      background:#0d1627;
+      border-radius:8px;
+      padding:8px;
+      font:11px/1.5 Consolas,monospace;
+      color:#d0dcf0;
+    }
+    #bch-log .success {color:#8ce3b8}
+    #bch-log .error {color:#ff9ca8}
+    #bch-tab {
+      position:fixed;
+      top:20px;
+      right:20px;
+      z-index:2147483647;
+      background:#30466b;
+      color:white;
+      border:1px solid #6983a7;
+      border-radius:9px;
+      padding:9px 13px;
+      cursor:pointer;
+      display:none;
+    }
+  `;
+
+  const style = document.createElement('style');
+  style.id = 'bch-v3-style';
+  style.textContent = css;
+  document.head.appendChild(style);
+
+  const panel = document.createElement('section');
+  panel.id = 'bch-root';
+
+  panel.innerHTML = `
+    <div id="bch-head">
+      <span style="font-size:26px">🎁</span>
+      <div>
+        <strong>Botva · Сундуки</strong>
+        <small>Автоматическое открытие v3</small>
+      </div>
+      <div class="spacer"></div>
+      <button id="bch-min">−</button>
+      <button id="bch-hide">×</button>
+    </div>
+
+    <div id="bch-body">
+      <label>Сколько сундуков открыть?</label>
+      <select id="bch-count">
+        <option value="1">1 сундук</option>
+        <option value="5">5 сундуков</option>
+        <option value="10">10 сундуков</option>
+        <option value="25">25 сундуков</option>
+        <option value="50">50 сундуков</option>
+        <option value="100">100 сундуков</option>
+        <option value="0">Без ограничения</option>
+        <option value="custom">Своё количество</option>
+      </select>
+
+      <div id="bch-custom-wrap" style="display:none">
+        <label>Своё количество</label>
+        <input id="bch-custom"
+               type="number"
+               min="1"
+               max="100000"
+               value="15">
+      </div>
+
+      <div id="bch-row">
+        <div>
+          <label>Пауза, мс</label>
+          <input id="bch-delay"
+                 type="number"
+                 min="150"
+                 max="60000"
+                 value="300">
+        </div>
+        <div style="padding-top:24px">
+          <label>
+            <input id="bch-auto" type="checkbox">
+            Автостарт
+          </label>
+        </div>
+      </div>
+
+      <div id="bch-status">
+        <div id="bch-state">Готов к запуску</div>
+        <div id="bch-counter">0 / 5</div>
+        <div id="bch-progress">
+          <div id="bch-progress-fill"></div>
+        </div>
+      </div>
+
+      <div id="bch-actions">
+        <button id="bch-start">▶ Запустить</button>
+        <button id="bch-pause" disabled>⏸ Пауза</button>
+        <button id="bch-stop" disabled>■ Стоп</button>
+        <button id="bch-once">1 сундук</button>
+      </div>
+
+      <div id="bch-log"></div>
+
+      <div style="font-size:11px;color:#99abc5;margin-top:8px">
+        После выполнения лимита повторный запуск
+        возможен только вручную или после нового
+        открытия окна сундука.
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(panel);
+
+  const tab = document.createElement('button');
+  tab.id = 'bch-tab';
+  tab.textContent = '🎁 Сундуки';
+  document.body.appendChild(tab);
+
+  const $ = id => panel.querySelector('#' + id);
+
+  function log(message, cls = '') {
+    const line = document.createElement('div');
+    line.className = cls;
+    line.textContent =
+      new Date().toLocaleTimeString() + '  ' + message;
+
+    $('bch-log').appendChild(line);
+    $('bch-log').scrollTop = $('bch-log').scrollHeight;
+
+    while ($('bch-log').children.length > 100) {
+      $('bch-log').firstChild.remove();
+    }
+
+    console.log('[BotvaChest]', message);
+  }
+
+  function visible(el) {
+    return !!el &&
+      !!el.getClientRects().length &&
+      getComputedStyle(el).visibility !== 'hidden';
+  }
+
+  function popup() {
+    return [
+      ...document.querySelectorAll(
+        '#l_popup,.popup_my_container,.confirm_content_box'
+      )
+    ].find(el =>
+      visible(el) &&
+      el.querySelector('.btn_start,.btn_more')
+    );
+  }
+
+  function button(p) {
+    return p?.querySelector('.btn_start,.btn_more');
+  }
+
+  function disabled(b) {
+    return !b ||
+      b.disabled ||
+      b.classList.contains('disabled') ||
+      b.getAttribute('aria-disabled') === 'true';
+  }
+
+  function prize() {
+    const p = popup();
+    const item = p?.querySelector(
+      '.conflict_prizes .item_box.got,.item_box.got'
+    );
+
+    if (!item) return '';
+
+    const title =
+      item.querySelector('img')?.getAttribute('title') || '';
+
+    const qty =
+      item.querySelector('.modern_amount')?.textContent.trim() || '';
+
+    return [title, qty ? '× ' + qty : '']
+      .filter(Boolean)
+      .join(' ') || 'приз';
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify({
+        count: $('bch-count').value,
+        custom: $('bch-custom').value,
+        delay: $('bch-delay').value,
+        auto: $('bch-auto').checked
+      }));
+    } catch {}
+  }
+
+  function selectedLimit() {
+    const raw = $('bch-count').value === 'custom'
+      ? $('bch-custom').value
+      : $('bch-count').value;
+
+    const n = Number(raw);
+
+    if (!Number.isSafeInteger(n) || n < 0 || n > 100000) {
+      return null;
+    }
+
+    if ($('bch-count').value === 'custom' && n < 1) {
+      return null;
+    }
+
+    return n;
+  }
+
+  function render(message) {
+    $('bch-state').textContent =
+      message || (running
+        ? paused ? 'На паузе' : 'Открываю...'
+        : 'Готов к запуску');
+
+    $('bch-counter').textContent =
+      completed + ' / ' + (limit || '∞');
+
+    $('bch-progress-fill').style.width =
+      limit
+        ? Math.min(100, completed / limit * 100) + '%'
+        : '0%';
+
+    $('bch-start').disabled = running;
+    $('bch-once').disabled = running;
+    $('bch-stop').disabled = !running;
+    $('bch-pause').disabled = !running;
+
+    $('bch-pause').textContent =
+      paused ? '▶ Продолжить' : '⏸ Пауза';
+  }
+
+  function schedule(ms) {
+    clearTimeout(timer);
+
+    if (running) {
+      timer = setTimeout(tick, ms);
+    }
+  }
+
+  function stop(reason = 'Остановлено пользователем') {
+    if (!running) return;
+
+    running = false;
+    paused = false;
+    phase = 'idle';
+
+    // Ключевое исправление:
+    // не разрешаем автостарту повторить серию.
+    autoArmed = false;
+
+    clearTimeout(timer);
+    timer = null;
+
+    render(reason);
+    log(reason + '. Открыто: ' + completed, 'success');
+  }
+
+  function start(single = false) {
+    if (running) return;
+
+    // Запрещаем повторный автоматический старт.
+    autoArmed = false;
+
+    if (!popup()) {
+      log('Сначала открой окно сундука', 'error');
+      render('Окно сундука не найдено');
+      return;
+    }
+
+    const n = single ? 1 : selectedLimit();
+
+    if (n === null) {
+      log('Неверное количество сундуков', 'error');
+      return;
+    }
+
+    limit = n;
+    completed = 0;
+    paused = false;
+    phase = 'idle';
+    lastPrize = '';
+    running = true;
+
+    render('Открываю...');
+    log(
+      'Старт: ' + (limit || 'без ограничения'),
+      'success'
+    );
+
+    schedule(200);
+  }
+
+  function tick() {
+    if (!running) return;
+
+    if (paused && phase === 'idle') {
+      render('На паузе');
+      return;
+    }
+
+    const p = popup();
+
+    if (!p) {
+      stop('Окно сундука закрыто');
+      return;
+    }
+
+    const b = button(p);
+
+    if (!b) {
+      stop('Кнопка открытия не найдена');
+      return;
+    }
+
+    const now = Date.now();
+
+    if (phase === 'idle') {
+      if (limit && completed >= limit) {
+        stop('Выбранное количество открыто');
+        return;
+      }
+
+      if (disabled(b)) {
+        schedule(180);
+        return;
+      }
+
+      phase = 'waitDisable';
+      phaseAt = now;
+
+      render('Открываю сундук №' + (completed + 1));
+
+      try {
+        b.click();
+      } catch (e) {
+        stop('Ошибка нажатия: ' + e.message);
+        return;
+      }
+
+      schedule(120);
+      return;
+    }
+
+    if (phase === 'waitDisable') {
+      if (disabled(b)) {
+        phase = 'waitEnable';
+        phaseAt = now;
+        schedule(120);
+        return;
+      }
+
+      if (now - phaseAt > CLICK_TIMEOUT) {
+        stop('Игра не подтвердила нажатие');
+        return;
+      }
+
+      schedule(120);
+      return;
+    }
+
+    if (phase === 'waitEnable') {
+      if (!disabled(b)) {
+        completed++;
+
+        const found = prize();
+
+        if (found && found !== lastPrize) {
+          log('🎁 ' + found, 'success');
+          lastPrize = found;
+        }
+
+        render('Открыто: ' + completed);
+
+        if (limit && completed >= limit) {
+          stop('Выбранное количество открыто');
+          return;
+        }
+
+        phase = 'idle';
+
+        const delay = Math.max(
+          150,
+          Math.min(
+            60000,
+            Number($('bch-delay').value) || 300
+          )
+        );
+
+        schedule(delay);
+        return;
+      }
+
+      if (now - phaseAt > UNLOCK_TIMEOUT) {
+        stop('Кнопка долго заблокирована');
+        return;
+      }
+
+      schedule(150);
+    }
+  }
+
+  // Восстанавливаем настройки.
+  const choices = [
+    '1', '5', '10', '25',
+    '50', '100', '0', 'custom'
+  ];
+
+  $('bch-count').value =
+    choices.includes(String(config.count))
+      ? String(config.count)
+      : '5';
+
+  $('bch-custom').value = config.custom ?? 15;
+  $('bch-delay').value = config.delay ?? 300;
+  $('bch-auto').checked = !!config.auto;
+
+  function updateCustom() {
+    $('bch-custom-wrap').style.display =
+      $('bch-count').value === 'custom'
+        ? 'block'
+        : 'none';
+
+    if (!running) {
+      const n = selectedLimit();
+      $('bch-counter').textContent =
+        '0 / ' + (n === 0 ? '∞' : n ?? '?');
+    }
+
+    save();
+  }
+
+  $('bch-count').addEventListener('change', updateCustom);
+
+  ['bch-custom', 'bch-delay', 'bch-auto'].forEach(id => {
+    $(id).addEventListener('change', () => {
+      save();
+
+      if (id === 'bch-custom') {
+        updateCustom();
+      }
+    });
+  });
+
+  $('bch-start').onclick = () => start(false);
+  $('bch-once').onclick = () => start(true);
+  $('bch-stop').onclick = () => stop();
+
+  $('bch-pause').onclick = () => {
+    if (!running) return;
+
+    paused = !paused;
+
+    if (!paused) {
+      schedule(100);
+    }
+
+    render(
+      paused
+        ? phase === 'idle'
+          ? 'На паузе'
+          : 'Пауза после текущего сундука'
+        : 'Продолжаю'
+    );
+
+    log(paused ? 'Пауза' : 'Продолжено');
+  };
+
+  $('bch-min').onclick = () => {
+    panel.classList.toggle('minimized');
+
+    $('bch-min').textContent =
+      panel.classList.contains('minimized')
+        ? '+'
+        : '−';
+  };
+
+  $('bch-hide').onclick = () => {
+    panel.style.display = 'none';
+    tab.style.display = 'block';
+  };
+
+  tab.onclick = () => {
+    panel.style.display = 'block';
+    tab.style.display = 'none';
+  };
+
+  // Перемещение панели мышью.
+  let drag = null;
+
+  $('bch-head').addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return;
+
+    const r = panel.getBoundingClientRect();
+
+    drag = {
+      x: e.clientX,
+      y: e.clientY,
+      left: r.left,
+      top: r.top
+    };
+
+    panel.style.left = r.left + 'px';
+    panel.style.right = 'auto';
+
+    $('bch-head').setPointerCapture(e.pointerId);
+  });
+
+  $('bch-head').addEventListener('pointermove', e => {
+    if (!drag) return;
+
+    panel.style.left =
+      Math.max(0, drag.left + e.clientX - drag.x) + 'px';
+
+    panel.style.top =
+      Math.max(0, drag.top + e.clientY - drag.y) + 'px';
+  });
+
+  $('bch-head').addEventListener('pointerup', () => {
+    drag = null;
+  });
+
+  $('bch-head').addEventListener('pointercancel', () => {
+    drag = null;
+  });
+
+  // Обработка сообщений игры.
+  if (typeof window.bOk === 'function') {
+    const originalBOk = window.bOk;
+
+    window.bOk = function (...args) {
+      if (running) {
+        stop('Сообщение игры: ' + String(args[0] ?? ''));
+      }
+
+      return originalBOk.apply(this, args);
+    };
+  }
+
+  // Автостарт только при новом появлении окна.
+  popupWasOpen = !!popup();
+  autoArmed = !popupWasOpen;
+
+  const observer = new MutationObserver(() => {
+    const isOpen = !!popup();
+
+    if (!isOpen) {
+      popupWasOpen = false;
+      autoArmed = true;
+      return;
+    }
+
+    if (!popupWasOpen) {
+      popupWasOpen = true;
+
+      if (
+        autoArmed &&
+        $('bch-auto').checked &&
+        !running
+      ) {
+        autoArmed = false;
+        start();
+      }
+    }
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+
+  updateCustom();
+  render('Готов к запуску');
+
+  log('Скрипт готов. Проверь сначала 1 сундук.', 'success');
+
+})();
