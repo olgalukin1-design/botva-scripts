@@ -1,0 +1,416 @@
+(() => {
+  'use strict';
+  const KEY = 'lunarTrackerV2';
+  if (window[KEY]?.version === 7) { window[KEY].show(); return; }
+  const previous = window[KEY]?.getData?.();
+  const oldPanelRect = document.getElementById('lunar-tracker-v2')?.getBoundingClientRect();
+  window[KEY]?.destroy?.();
+  if (!document.querySelector('.lunar_stage')) {
+    alert('Открой окно самого боя и запусти скрипт в нём.'); return;
+  }
+  // Останавливаем старые версии из этой переписки.
+  if (window.lunarTracker?.destroy) window.lunarTracker.destroy();
+  else if (typeof window.lunarTracker === 'number') {
+    clearInterval(window.lunarTracker); delete window.lunarTracker;
+  }
+  window.lunarBattleRecorder?.stop?.('Включён счётчик.');
+
+  const players = new Map(), events = new Map(), names = new Map();
+  const rowStages = new WeakMap();
+  if (previous) {
+    for (const player of previous.players || []) if (player.side === 'enemies') players.set(player.name, player);
+    for (const [id, name] of Object.entries(previous.skills || {})) names.set(Number(id), name);
+    const counts = new Map();
+    for (const event of previous.events || []) {
+      if (!players.has(event.player)) continue;
+      const base = JSON.stringify([event.stage, event.player, event.skill, event.text]);
+      const n = (counts.get(base) || 0) + 1;
+      counts.set(base, n); events.set(JSON.stringify([base, n]), event);
+    }
+  }
+  const SETTINGS_KEY = 'botva.lunarTracker.ui.v1';
+  let savedSettings = previous?.uiSettings || {}, storageAvailable = true;
+  try {
+    const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    if (stored && typeof stored === 'object') savedSettings = stored;
+  } catch (_) { storageAvailable = false; }
+  let iconSize = [20,28,36].includes(Number(savedSettings.iconSize)) ? Number(savedSettings.iconSize) : 28;
+  let settingsTimer = null, resizeObserver = null, highlightTimer = null;
+  const recent = new Map();
+  const HIGHLIGHT_MS = 3000;
+  function markNewAction(player, skill) {
+    const old = recent.get(player);
+    const skills = old && old.until > Date.now() ? old.skills : new Set();
+    skills.add(skill); recent.set(player, {until:Date.now() + HIGHLIGHT_MS, skills});
+    scheduleHighlightExpiry();
+  }
+  function scheduleHighlightExpiry() {
+    clearTimeout(highlightTimer);
+    if (!recent.size) return;
+    const next = Math.min(...[...recent.values()].map(item => item.until));
+    highlightTimer = setTimeout(() => {
+      for (const [player, item] of recent) if (item.until <= Date.now()) recent.delete(player);
+      render(); scheduleHighlightExpiry();
+    }, Math.max(10, next - Date.now() + 10));
+  }
+  function updateSizeButtons() {
+    for (const [id, size] of [['size-small',20],['size-medium',28],['size-large',36]]) {
+      $(id).setAttribute('aria-pressed', String(iconSize === size));
+    }
+    $('save-state').textContent = storageAvailable ? 'Сохраняется в этом браузере.' : 'Браузер запретил сохранение. Настройки работают до закрытия страницы.';
+  }
+  let view = 'recon';
+  const expanded = new Set();
+  let iconItems = [];
+  const iconPaints = new Map();
+  function rememberIcon(id, source, preferred = false) {
+    if (!source || !id || (iconPaints.has(id) && !preferred)) return;
+    let style = getComputedStyle(source);
+    if (style.backgroundImage === 'none') {
+      const before = getComputedStyle(source, '::before');
+      if (before.backgroundImage !== 'none') style = before;
+    }
+    if (style.backgroundImage === 'none') return;
+    const paint = {};
+    for (const property of ['backgroundImage','backgroundPosition','backgroundSize','backgroundRepeat','width','height']) paint[property] = style[property];
+    iconPaints.set(id, paint);
+  }
+  function syncIcons() {
+    for (const item of iconItems) {
+      const paint = iconPaints.get(item.id);
+      if (paint && !item.paintApplied) {
+        Object.assign(item.icon.style, paint); item.paintApplied = true;
+      }
+      const css = getComputedStyle(item.icon);
+      const before = getComputedStyle(item.icon, '::before');
+      const after = getComputedStyle(item.icon, '::after');
+      const pseudoHasImage = style => style.backgroundImage !== 'none' || (style.content && !['none','normal','\"\"'].includes(style.content));
+      const styled = css.backgroundImage !== 'none' || pseudoHasImage(before) || pseudoHasImage(after);
+      item.picture.hidden = !styled;
+      item.label.hidden = styled;
+      if (styled) {
+        const width = parseFloat(css.width) || 16;
+        const height = parseFloat(css.height) || 16;
+        const scale = iconSize / Math.max(width, height);
+        const transform = 'scale(' + scale + ')';
+        if (item.icon.style.transform !== transform) item.icon.style.transform = transform;
+        item.icon.style.transformOrigin = 'center';
+      }
+    }
+  }
+  const shortNames = {1:'Ракета',2:'Вампиризм',3:'Ремонт 40%',4:'Ремонт 80%',5:'Жел. спираль',6:'Тит. спираль',7:'Защита',8:'Армагеддон',9:'Граната',10:'Бомба',11:'Косм. ракета'};
+  let stage = null, running = true, timer, observer, dirty = true;
+  let firstRead = true, warning = '', lastError = '';
+  const startedAt = previous?.startedAt || new Date().toISOString();
+  const host = document.createElement('div');
+  host.id = 'lunar-tracker-v2';
+  Object.assign(host.style, {
+    position: 'fixed', bottom: '12px', left: '12px', width: '660px', height: '390px', maxWidth: 'calc(100vw - 24px)', maxHeight: 'calc(100vh - 24px)', resize: 'both', overflow: 'hidden', minWidth: '280px', minHeight: '250px', borderRadius: '10px', boxSizing: 'border-box',
+    zIndex: '2147483647'
+  });
+  host.style.setProperty('--lunar-icon-size', iconSize + 'px');
+  document.body.append(host);
+  const ui = host.attachShadow({ mode: 'open' });
+  ui.innerHTML = "<style>\n:host{font:14px/1.4 -apple-system,BlinkMacSystemFont,\"Segoe UI\",Arial,sans-serif;color:#edf1f7;color-scheme:dark}\n*{box-sizing:border-box} [hidden]{display:none!important}\nsection{height:100%;width:100%;background:#181d26;border:1px solid #586172;border-radius:10px;display:flex;flex-direction:column;overflow:hidden}\nheader{min-height:56px;display:flex;align-items:center;padding:4px 8px 4px 14px;gap:4px;background:#202734;cursor:move;touch-action:none;flex:none}\n.title{flex:1;min-width:0}.title strong{font-size:15px;font-weight:650;display:block;white-space:nowrap}.title span{display:block;font-size:14px;color:#acbbcf}\nbutton{font:inherit;color:inherit;background:none;border:1px solid transparent;border-radius:6px;cursor:pointer;min-height:44px;padding:0 10px}\nbutton:hover{background:#303b4e}button:focus-visible,summary:focus-visible{outline:2px solid #8fbffa;outline-offset:-2px}\n.icon{width:44px;flex:none;padding:0;font-size:22px;color:#c8d4e6}\n#content{display:flex;flex-direction:column;min-height:0;flex:1}\nnav{display:flex;align-items:center;gap:4px;padding:0 10px;border-bottom:1px solid #343e4e;flex:none}\nnav button{color:#a9b8cc;border-radius:0;padding:0 12px;border-bottom:2px solid transparent}\nnav button[aria-pressed=\"true\"]{color:#e1edff;border-bottom-color:#8bbcff;background:#253248}\n.hint{color:#a9b8cc;font-size:14px;margin-left:auto;padding-left:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n#notice{font-size:14px;color:#ffd49b;padding:6px 12px;background:#382d20;max-height:70px;overflow:auto;flex:none}\n#body{overflow:auto;overscroll-behavior:contain;flex:1;min-height:0;padding:0 12px 8px;scrollbar-width:thin;scrollbar-color:#56667d transparent}\n.row{display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px;align-items:center;min-height:48px;border-bottom:1px solid #303a49;padding:6px 0}\n.name{min-width:0;text-align:left;padding:2px 4px;display:block;width:100%;line-height:1.3}\n.name b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.name small{font-size:14px;color:#a9b8cc;display:block;font-weight:400;margin-top:3px}\n.enemy b{color:#ffb3b5}.ally b{color:#a7dfc2}\n.skills{display:flex;gap:5px;flex-wrap:wrap;min-width:0;align-items:center}\n.chip{display:inline-flex;align-items:center;gap:6px;min-height:28px;background:#283140;border:1px solid #45536a;border-radius:5px;padding:3px 7px;max-width:100%;font-size:14px;line-height:1.3}\n.chip .label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.chip strong{color:#e8f0ff;font-variant-numeric:tabular-nums;white-space:nowrap}\n.chip.last{background:#253b55;border-color:#87b6ed}.empty{color:#a9b8cc;font-size:14px}\n.history{grid-column:1/-1;background:#202937;border-radius:6px;padding:8px 10px;line-height:1.5;color:#c6d4e6;white-space:normal}\n.history div+div{margin-top:7px;border-top:1px solid #394557;padding-top:7px}\n#menu{max-height:calc(100% - 64px);overflow:auto;scrollbar-width:thin;position:absolute;right:10px;top:53px;z-index:5;width:260px;max-width:calc(100% - 20px);padding:6px;background:#263041;border:1px solid #65748b;border-radius:8px;box-shadow:0 8px 24px #0008}\n#menu button{display:block;width:100%;text-align:left}#close{color:#ffb3b5}\n@media(max-width:500px){.row{grid-template-columns:112px minmax(0,1fr);gap:6px}.hint{display:none}header{padding-left:10px}.title strong{font-size:14px}.title span{font-size:14px}#body{padding-left:8px;padding-right:8px}}\n\n.picture{width:calc(var(--lunar-icon-size,28px) + 4px);height:calc(var(--lunar-icon-size,28px) + 4px);display:inline-flex;align-items:center;justify-content:center;flex:none}\n.chip{min-height:calc(var(--lunar-icon-size,28px) + 8px);gap:5px;padding:2px 6px}\n::slotted(.lt-skill-icon){pointer-events:none;vertical-align:middle}\n\n.setting{padding:8px;border-bottom:1px solid #536077;margin-bottom:4px}\n.setting small{display:block;color:#c0cde0;font-size:14px;line-height:1.4;margin:6px 0}\n.size-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-top:6px}\n#menu .size-options button{text-align:center;padding:0 5px;border:1px solid #61728b}\n#menu .size-options button[aria-pressed=\"true\"]{background:#354f71;border-color:#a0c7fa}\n.row{transition:background-color .2s ease;border-radius:5px}\n.row.fresh{background:#20372e;box-shadow:inset 3px 0 #a4e6bd}\n.chip.fresh{border-color:#a4e6bd;background:#294b3c}\n.new-label{color:#b9f0cc;font-weight:600}\n@media(prefers-reduced-motion:reduce){.row{transition:none}}\n</style><section><header id=\"drag\"><div class=\"title\"><strong>Разведка врагов</strong><span id=\"status\">Подключаюсь…</span></div><button class=\"icon\" id=\"fold\" title=\"Свернуть, не останавливая запись\" aria-label=\"Свернуть\">−</button><button class=\"icon\" id=\"more\" title=\"Меню\" aria-label=\"Меню\" aria-expanded=\"false\">⋯</button></header>\n<div id=\"menu\" hidden><div class=\"setting\"><div>Размер иконок</div><div class=\"size-options\" role=\"group\" aria-label=\"Размер иконок\"><button id=\"size-small\" aria-pressed=\"false\" title=\"20 пикселей\">Мал.</button><button id=\"size-medium\" aria-pressed=\"true\" title=\"28 пикселей\">Сред.</button><button id=\"size-large\" aria-pressed=\"false\" title=\"36 пикселей\">Круп.</button></div><small id=\"save-state\"></small></div><button id=\"pause\">Пауза записи</button><button id=\"csv\">Скачать CSV</button><button id=\"json\">Скачать JSON</button><button id=\"close\">Убрать панель</button></div>\n<div id=\"content\"><nav><span style=\"padding:5px 2px;color:#dce7f7\">Раскрытые умения</span><span class=\"hint\" title=\"Выделено последнее замеченное умение. Нажми на игрока для истории.\">Иконка — умение</span></nav><div id=\"notice\" hidden></div><div id=\"body\"></div></div></section>";
+  const $ = id => ui.getElementById(id);
+  const clean = value => (value || '').replace(/\s+/g, ' ').trim();
+  const element = (tag, text) => {
+    const el = document.createElement(tag);
+    if (text !== undefined) el.textContent = text;
+    return el;
+  };
+  function readPlayers() {
+    for (const side of ['enemies']) {
+      document.querySelectorAll(`.lunar_${side} .user_block`).forEach(block => {
+        const name = clean(block.querySelector('.lunar_name')?.textContent);
+        if (!name || name === '[NAME]') return;
+        if (!players.has(name)) {
+          players.set(name, { name, id: block.dataset.id || '', side }); dirty = true;
+        }
+      });
+    }
+    document.querySelectorAll('.lunar_controls [data-skill]').forEach(skill => {
+      const id = Number(skill.dataset.skill);
+      const title = /subject:\|([^|]+)\|/.exec(skill.getAttribute('onmouseover') || '')?.[1];
+      if (id > 0 && title) names.set(id, title);
+      if (id > 0) rememberIcon(id, skill.querySelector('.skill_image'));
+    });
+  }
+  function scan() {
+    if (!running) return;
+    const raw = clean(document.querySelector('.lunar_stage span')?.textContent);
+    if (!/^\d+$/.test(raw)) return;
+    const current = Number(raw);
+    if (stage !== null && current < stage) {
+      running = false; warning = 'Этап уменьшился: возможно, начался новый бой. Скачай данные и перезапусти счётчик.';
+      dirty = true; render(); return;
+    }
+    if (stage !== current) { stage = current; dirty = true; }
+    readPlayers();
+    const rows = [...document.querySelectorAll('.lunar_log .lunar_log_row')];
+    // При запуске посреди фазы выбора на экране ещё лежит лог прошлого этапа.
+    const blocks = [...document.querySelectorAll('.lunar_allies .user_block')];
+    const choosing = blocks.some(b => {
+      const box = b.querySelector('.item_box');
+      return box && !box.classList.contains('disabled');
+    });
+    const initialStage = firstRead && choosing ? current - 1 : current;
+    const occurrences = new Map();
+    for (const row of rows) {
+      const icon = [...row.querySelectorAll('.icon2')].find(el =>
+        [...el.classList].some(c => /^icon_lunar_skill[1-9]\d*$/.test(c)));
+      if (!icon) continue; // Отражённый урон и другие эффекты — не новый бросок.
+      const cls = [...icon.classList].find(c => /^icon_lunar_skill[1-9]\d*$/.test(c));
+      const skill = Number(cls.replace('icon_lunar_skill', ''));
+      rememberIcon(skill, icon, true);
+      const actor = [...row.querySelectorAll('b')].find(b => !b.classList.length);
+      const player = clean(actor?.textContent);
+      if (!player || players.get(player)?.side !== 'enemies') continue;
+      const title = clean(icon.getAttribute('title'));
+      if (title) names.set(skill, title);
+      if (!players.has(player)) { players.set(player, { name: player, side: 'unknown', id: '' }); dirty = true; }
+      // Старые узлы лога сохраняют свой этап, даже когда счётчик этапа уже вырос.
+      if (!rowStages.has(row)) rowStages.set(row, initialStage);
+      const eventStage = rowStages.get(row);
+      if (eventStage < 1) continue;
+      const text = clean(row.textContent);
+      const base = JSON.stringify([eventStage, player, skill, text]);
+      const n = (occurrences.get(base) || 0) + 1;
+      occurrences.set(base, n);
+      const key = JSON.stringify([base, n]);
+      if (!events.has(key)) {
+        events.set(key, { stage: eventStage, player, skill, text, observedAt: new Date().toISOString() });
+        if (!firstRead) markNewAction(player, skill);
+        dirty = true;
+      }
+    }
+    firstRead = false;
+    if (dirty) render();
+  }
+  function render() {
+    dirty = false;
+    $('status').textContent = (running ? '' : 'Пауза · ') + 'Этап ' + (stage ?? '—') + ' · ' + events.size + ' применений';
+    $('status').title = 'Считаются только замеченные применения. До запуска история может быть неполной.';
+    const note = warning || lastError;
+    $('notice').hidden = !note;
+    $('notice').textContent = note;
+    const list = [...events.values()];
+    const ordered = [...players.values()].filter(p => p.side === 'enemies').sort((a,b) =>
+      ({enemies:0,allies:1,unknown:2}[a.side] - {enemies:0,allies:1,unknown:2}[b.side]));
+    const fragment = document.createDocumentFragment();
+    const lightIcons = []; iconItems = [];
+    if (!ordered.length) fragment.append(element('p', 'Противники пока не найдены.'));
+    for (const player of ordered) {
+      const own = list.filter(e => e.player === player.name);
+      const fresh = recent.get(player.name);
+      const isFresh = fresh && fresh.until > Date.now();
+      const row = element('div'); row.className = 'row' + (isFresh ? ' fresh' : ''); row.dataset.player = player.name;
+      const button = element('button'); button.className = 'name ' + (player.side === 'allies' ? 'ally' : 'enemy');
+      button.title = player.name + ' — нажми для истории';
+      button.setAttribute('aria-expanded', String(expanded.has(player.name)));
+      button.append(element('b', player.name));
+      const metadata = element('small', 'Враг · ' + own.length);
+      if (isFresh) { metadata.append(document.createTextNode(' · ')); const badge = element('span', 'новое'); badge.className = 'new-label'; metadata.append(badge); }
+      button.append(metadata);
+      button.onclick = () => { expanded.has(player.name) ? expanded.delete(player.name) : expanded.add(player.name); render(); };
+      const skills = element('div'); skills.className = 'skills';
+      const counts = new Map();
+      own.forEach(e => counts.set(e.skill, (counts.get(e.skill) || 0) + 1));
+      const last = own[own.length - 1];
+      for (const [id, count] of [...counts].sort((a,b) => a[0]-b[0])) {
+        const chip = element('span'); chip.className = 'chip' + (last?.skill === id ? ' last' : '') + (isFresh && fresh.skills.has(id) ? ' fresh' : '');
+        const title = names.get(id) || ('Умение ' + id);
+        const stages = own.filter(e => e.skill === id).map(e => e.stage);
+        chip.title = title + ' · ' + count + ' применений · этапы: ' + stages.join(', ') + (last?.skill === id ? ' · последнее замеченное, этап ' + last.stage : '');
+        const label = element('span', shortNames[id] || title); label.className = 'label';
+        const picture = element('span'); picture.className = 'picture';
+        const slot = document.createElement('slot');
+        slot.name = 'lunar-icon-' + lightIcons.length;
+        const icon = document.createElement('b');
+        icon.className = 'icon2 icon_lunar_skill' + id + ' lt-skill-icon';
+        icon.slot = slot.name;
+        icon.setAttribute('role', 'img'); icon.setAttribute('aria-label', title);
+        Object.assign(icon.style, {display:'inline-block', position:'relative', float:'none', margin:'0', flexShrink:'0'});
+        picture.append(slot); lightIcons.push(icon);
+        iconItems.push({id, icon, picture, label});
+        chip.setAttribute('aria-label', title + ', применений: ' + count);
+        chip.append(picture, label, element('strong', '×' + count)); skills.append(chip);
+      }
+      if (!counts.size) { const empty = element('span', 'Набор пока неизвестен'); empty.className = 'empty'; skills.append(empty); }
+      row.append(button, skills);
+      if (expanded.has(player.name)) {
+        const history = element('div'); history.className = 'history';
+        if (!own.length) history.append(element('div', 'Применений ещё не замечено.'));
+        for (const e of own) history.append(element('div', 'Этап ' + e.stage + ' · ' + (names.get(e.skill) || ('Умение ' + e.skill)) + '. ' + e.text));
+        row.append(history);
+      }
+      fragment.append(row);
+    }
+    const scrollTop = $('body').scrollTop;
+    host.replaceChildren(...lightIcons);
+    $('body').replaceChildren(fragment); $('body').scrollTop = scrollTop;
+    syncIcons();
+    $('pause').textContent = running ? 'Пауза записи' : 'Продолжить запись';
+    updateSizeButtons();
+  }
+  function getReconData() {
+    const list = [...events.values()];
+    return [...players.values()].filter(p => p.side === 'enemies').map(player => {
+      const own = list.filter(e => e.player === player.name);
+      const counts = new Map();
+      for (const event of own) {
+        let item = counts.get(event.skill);
+        if (!item) {
+          item = { id: event.skill, name: names.get(event.skill) || ('Умение ' + event.skill), count: 0, stages: [] };
+          counts.set(event.skill, item);
+        }
+        item.count++;
+        if (!item.stages.includes(event.stage)) item.stages.push(event.stage);
+      }
+      return { player: player.name, id: player.id, total: own.length,
+        skills: [...counts.values()].sort((a,b) => b.count-a.count || a.id-b.id),
+        last: own.length ? own[own.length-1] : null };
+    });
+  }
+  function getData() {
+    return { version: 7, startedAt, exportedAt: new Date().toISOString(),
+      warning: 'Только наблюдаемые применения; история до запуска может быть неполной.',
+      players: [...players.values()], skills: Object.fromEntries(names),
+      events: [...events.values()], reconnaissance: getReconData(), uiSettings: collectSettings() };
+  }
+  function download(type) {
+    safeScan();
+    const data = getData(); let text;
+    if (type === 'json') text = JSON.stringify(data, null, 2);
+    else {
+      const quote = value => {
+        let s = String(value ?? '');
+        if (/^[\s]*[=+\-@]/.test(s)) s = "'" + s; // Защита от формул в Excel.
+        return '"' + s.replace(/"/g, '""') + '"';
+      };
+      text = '\uFEFF' + [['Этап','Игрок','Умение','Описание'],
+        ...data.events.map(e => [e.stage,e.player,names.get(e.skill) || e.skill,e.text])]
+        .map(row => row.map(quote).join(';')).join('\r\n');
+    }
+    const url = URL.createObjectURL(new Blob([text], {type: type === 'json' ? 'application/json' : 'text/csv;charset=utf-8'}));
+    const a = element('a'); a.href = url; a.download = `lunar-actions-${Date.now()}.${type}`;
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+  function safeScan() {
+    try { scan(); syncIcons(); lastError = ''; }
+    catch (err) { lastError = String(err.message || err); dirty = true; render(); }
+  }
+  let folded = false, unfoldedSize = null;
+  function collectSettings() {
+    const rect = host.getBoundingClientRect();
+    return {iconSize, x:rect.left, y:rect.top,
+      width:folded ? (parseFloat(unfoldedSize?.width) || 660) : rect.width,
+      height:folded ? (parseFloat(unfoldedSize?.height) || 390) : rect.height};
+  }
+  function saveSettings() {
+    clearTimeout(settingsTimer);
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(collectSettings())); storageAvailable = true;
+    } catch (_) { storageAvailable = false; }
+    updateSizeButtons();
+  }
+  function queueSaveSettings() {
+    clearTimeout(settingsTimer); settingsTimer = setTimeout(saveSettings, 250);
+  }
+  function clampPosition() {
+    const maxWidth = Math.max(180, innerWidth - 16), maxHeight = Math.max(56, innerHeight - 16);
+    const minWidth = Math.min(280, maxWidth), minHeight = Math.min(folded ? 56 : 250, maxHeight);
+    host.style.minWidth = minWidth + 'px'; host.style.minHeight = minHeight + 'px';
+    host.style.maxWidth = maxWidth + 'px'; host.style.maxHeight = maxHeight + 'px';
+    host.style.width = Math.min(maxWidth, Math.max(minWidth, parseFloat(host.style.width) || 660)) + 'px';
+    host.style.height = Math.min(maxHeight, Math.max(minHeight, parseFloat(host.style.height) || 390)) + 'px';
+    const rect = host.getBoundingClientRect();
+    host.style.left = Math.max(8, Math.min(rect.left, innerWidth - rect.width - 8)) + 'px';
+    host.style.top = Math.max(8, Math.min(rect.top, innerHeight - rect.height - 8)) + 'px';
+    host.style.bottom = 'auto';
+  }
+  function restoreLayout() {
+    const finite = (v, fallback) => typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+    host.style.width = finite(savedSettings.width, oldPanelRect?.width || 660) + 'px';
+    host.style.height = Math.max(250, finite(savedSettings.height, oldPanelRect?.height || 390)) + 'px';
+    host.style.left = finite(savedSettings.x, oldPanelRect?.left ?? 12) + 'px';
+    host.style.top = finite(savedSettings.y, oldPanelRect?.top ?? Math.max(8, innerHeight - (parseFloat(host.style.height) || 390) - 12)) + 'px';
+    host.style.bottom = 'auto'; clampPosition();
+  }
+  function onViewportResize() { clampPosition(); queueSaveSettings(); }
+  function fold(value) {
+    if (value === folded) return;
+    if (value) {
+      unfoldedSize = {width:host.style.width, height:host.style.height};
+      host.style.width = '300px'; host.style.height = '56px'; host.style.minHeight = '56px'; host.style.resize = 'none';
+    } else {
+      host.style.width = unfoldedSize?.width || '660px'; host.style.height = unfoldedSize?.height || '390px'; host.style.minHeight = '250px'; host.style.resize = 'both';
+    }
+    folded = value; $('content').hidden = value;
+    $('fold').textContent = value ? '+' : '−';
+    $('fold').setAttribute('aria-label', value ? 'Развернуть' : 'Свернуть');
+    $('fold').title = value ? 'Развернуть' : 'Свернуть, не останавливая запись';
+    $('menu').hidden = true; $('more').setAttribute('aria-expanded', 'false');
+    clampPosition(); queueSaveSettings();
+  }
+  $('fold').onclick = () => fold(!folded);
+  $('more').onclick = () => {
+    if (folded) fold(false);
+    $('menu').hidden = !$('menu').hidden;
+    $('more').setAttribute('aria-expanded', String(!$('menu').hidden));
+  };
+  ui.addEventListener('pointerdown', e => {
+    if (!$('menu').contains(e.target) && !$('more').contains(e.target)) {
+      $('menu').hidden = true; $('more').setAttribute('aria-expanded', 'false');
+    }
+  });
+  ui.addEventListener('keydown', e => { if(e.key === 'Escape') { $('menu').hidden = true; $('more').setAttribute('aria-expanded', 'false'); $('more').focus(); } });
+  let drag = null;
+  $('drag').addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.target.closest('button')) return;
+    const rect = host.getBoundingClientRect();
+    drag = {x:e.clientX, y:e.clientY, left:rect.left, top:rect.top};
+    $('drag').setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  $('drag').addEventListener('pointermove', e => {
+    if (!drag) return;
+    host.style.left = (drag.left + e.clientX - drag.x) + 'px';
+    host.style.top = (drag.top + e.clientY - drag.y) + 'px'; host.style.bottom = 'auto';
+    clampPosition();
+  });
+  $('drag').addEventListener('pointerup', () => { drag = null; queueSaveSettings(); });
+  $('drag').addEventListener('pointercancel', () => { drag = null; queueSaveSettings(); });
+  window.addEventListener('resize', onViewportResize);
+  window.addEventListener('beforeunload', saveSettings);
+  for (const [id, size] of [['size-small',20],['size-medium',28],['size-large',36]]) {
+    $(id).onclick = () => { iconSize = size; host.style.setProperty('--lunar-icon-size', size + 'px'); syncIcons(); updateSizeButtons(); queueSaveSettings(); };
+  }
+  $('pause').onclick = () => {
+    running = !running;
+    if (running) { warning = 'После паузы часть действий могла быть пропущена.'; safeScan(); }
+    render();
+  };
+  $('csv').onclick = () => download('csv');
+  $('json').onclick = () => download('json');
+  function destroy() {
+    saveSettings();
+    running = false; observer.disconnect(); clearInterval(timer);
+    resizeObserver?.disconnect(); clearTimeout(settingsTimer); clearTimeout(highlightTimer);
+    window.removeEventListener('resize', onViewportResize);
+    window.removeEventListener('beforeunload', saveSettings);
+    host.remove(); delete window[KEY];
+  }
+  $('close').onclick = () => {
+    if (confirm('Убрать счётчик? Сначала скачай запись, иначе данные будут потеряны.')) destroy();
+  };
+  restoreLayout();
+  resizeObserver = new ResizeObserver(() => { clampPosition(); queueSaveSettings(); });
+  resizeObserver.observe(host);
+  window[KEY] = { version: 7, getData, download, destroy, show() { fold(false); } };
+  observer = new MutationObserver(records => {
+    if (records.some(record => !host.contains(record.target))) safeScan();
+  });
+  observer.observe(document.body, {childList:true, subtree:true, characterData:true, attributes:true});
+  timer = setInterval(safeScan, 500);
+  safeScan();
+})();
