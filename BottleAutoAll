@@ -1,0 +1,363 @@
+
+javascript:(function(){
+'use strict';
+
+if(window.BottleAutoAll){
+    window.BottleAutoAll.destroy();
+}
+
+const TYPES=[1700,1490,1489,1701,1488,1487];
+const FORBIDDEN_IDS=new Set([771]);
+const DELAY=600;
+const UI_ID='bottle_auto_all';
+
+let running=false;
+let total=0;
+let startTime=0;
+let timer=null;
+let generation=0;
+
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+function allowed(id){
+    return TYPES.includes(Number(id)) &&
+           !FORBIDDEN_IDS.has(Number(id));
+}
+
+function bottle(id){
+    if(!allowed(id))return null;
+    return document.querySelector(
+        '.item_box.ico_item_'+id
+    );
+}
+
+function stock(id){
+    const el=bottle(id);
+    if(!el)return null;
+
+    const img=el.querySelector('img.js_count[count]');
+    if(!img)return null;
+
+    const n=Number(img.getAttribute('count'));
+    return Number.isFinite(n)?n:null;
+}
+
+const ui=document.createElement('div');
+ui.id=UI_ID;
+
+ui.innerHTML=`
+<div style="position:fixed;top:15px;right:15px;z-index:2147483647;width:300px;max-height:90vh;overflow:auto;background:linear-gradient(180deg,#29294e,#111827);border:2px solid #22c55e;border-radius:16px;color:white;font:13px Arial;box-shadow:0 10px 40px #0009;">
+<div style="background:linear-gradient(135deg,#22c55e,#15803d);padding:14px;text-align:center;font-size:21px;font-weight:bold;">
+🧪 BottleAuto
+</div>
+
+<div style="padding:14px;">
+<div style="text-align:center;margin-bottom:10px;color:#cbd5e1;">
+Выбери бутылки и количество
+</div>
+
+<div id="ba_rows"></div>
+
+<div style="display:flex;gap:8px;margin:12px 0;">
+<button id="ba_all" style="flex:1;padding:8px;border:0;border-radius:7px;background:#334155;color:white;cursor:pointer;">
+Выбрать все
+</button>
+<button id="ba_none" style="flex:1;padding:8px;border:0;border-radius:7px;background:#334155;color:white;cursor:pointer;">
+Снять выбор
+</button>
+</div>
+
+<div id="ba_time" style="text-align:center;color:#67e8f9;font-size:19px;margin:10px 0;">
+⏱ 0:00
+</div>
+
+<div id="ba_total" style="text-align:center;color:#fde68a;font-size:18px;font-weight:bold;">
+Использовано: 0
+</div>
+
+<div id="ba_status" style="text-align:center;color:#cbd5e1;margin:12px 0;">
+Готов к запуску
+</div>
+
+<button id="ba_start" style="width:100%;padding:12px;border:0;border-radius:9px;background:#22c55e;color:white;font-weight:bold;cursor:pointer;">
+▶ СТАРТ
+</button>
+
+<button id="ba_stop" style="display:none;width:100%;padding:12px;border:0;border-radius:9px;background:#ef4444;color:white;font-weight:bold;cursor:pointer;">
+■ СТОП
+</button>
+
+<button id="ba_close" style="display:block;margin:12px auto 0;background:none;border:0;color:#94a3b8;cursor:pointer;">
+✕ Закрыть
+</button>
+</div>
+</div>`;
+
+document.body.appendChild(ui);
+
+const $=id=>document.getElementById(id);
+
+function createRows(){
+    const rows=$('ba_rows');
+    rows.innerHTML='';
+
+    TYPES.forEach(id=>{
+        if(!allowed(id))return;
+
+        const n=stock(id);
+        const row=document.createElement('div');
+
+        row.style.cssText=
+        'display:flex;align-items:center;gap:8px;margin:6px 0;padding:7px;background:#ffffff0d;border-radius:8px;';
+
+        row.innerHTML=`
+<input type="checkbox" id="ba_check_${id}"
+${n>0?'checked':''}
+${n===null?'disabled':''}>
+
+<span style="flex:1;">
+🧪 ${id}
+<small style="display:block;color:#94a3b8;">
+Есть: <span id="ba_stock_${id}">${n===null?'?':n}</span>
+</small>
+</span>
+
+<input type="number" id="ba_limit_${id}"
+min="0"
+max="${n===null?0:n}"
+value="${n===null?0:n}"
+style="width:75px;padding:7px;border-radius:6px;border:1px solid #475569;background:#0f172a;color:white;text-align:center;">
+
+<span id="ba_done_${id}" style="color:#86efac;min-width:20px;">0</span>`;
+
+        rows.appendChild(row);
+    });
+}
+
+function update(){
+    if(startTime){
+        const sec=Math.floor((Date.now()-startTime)/1000);
+
+        $('ba_time').textContent=
+        '⏱ '+Math.floor(sec/60)+':'+
+        String(sec%60).padStart(2,'0');
+    }
+
+    $('ba_total').textContent='Использовано: '+total;
+
+    TYPES.forEach(id=>{
+        const el=$('ba_stock_'+id);
+
+        if(el){
+            const n=stock(id);
+            el.textContent=n===null?'?':n;
+        }
+    });
+}
+
+function status(s){
+    $('ba_status').textContent=s;
+}
+
+function setRunningUI(active){
+    $('ba_start').style.display=active?'none':'block';
+    $('ba_stop').style.display=active?'block':'none';
+
+    TYPES.forEach(id=>{
+        $('ba_check_'+id).disabled=
+            active||stock(id)===null;
+        $('ba_limit_'+id).disabled=active;
+    });
+
+    $('ba_all').disabled=active;
+    $('ba_none').disabled=active;
+}
+
+function stop(message='Остановлено пользователем'){
+    running=false;
+    generation++;
+
+    clearInterval(timer);
+
+    setRunningUI(false);
+    status(message);
+    update();
+}
+
+async function useOne(id,myGeneration){
+    if(!allowed(id)){
+        console.warn('⛔ Запрещённая бутылка:',id);
+        return false;
+    }
+
+    const el=bottle(id);
+    const before=stock(id);
+
+    if(!el||before===null||before<=0){
+        return false;
+    }
+
+    el.click();
+
+    for(let i=0;i<20;i++){
+        await sleep(150);
+
+        if(!running||myGeneration!==generation){
+            return false;
+        }
+
+        const after=stock(id);
+
+        if(after!==null&&after<before){
+            return true;
+        }
+    }
+
+    return false;
+}
+
+async function start(){
+    if(running)return;
+
+    const jobs=[];
+
+    for(const id of TYPES){
+        if(!allowed(id))continue;
+        if(!$('ba_check_'+id).checked)continue;
+
+        const amount=Number($('ba_limit_'+id).value);
+        const available=stock(id);
+
+        if(!Number.isSafeInteger(amount)||amount<0){
+            alert('Неверное количество для '+id);
+            return;
+        }
+
+        if(available===null||amount>available){
+            alert(
+                'Недостаточно бутылок '+id+
+                '. Доступно: '+available
+            );
+            return;
+        }
+
+        if(amount>0){
+            jobs.push({id,amount});
+        }
+    }
+
+    if(!jobs.length){
+        alert('Выбери хотя бы одну бутылку!');
+        return;
+    }
+
+    running=true;
+    total=0;
+    startTime=Date.now();
+
+    const myGeneration=++generation;
+
+    TYPES.forEach(id=>{
+        $('ba_done_'+id).textContent='0';
+    });
+
+    setRunningUI(true);
+    timer=setInterval(update,250);
+
+    for(const job of jobs){
+        if(!allowed(job.id))continue;
+
+        let done=0;
+        let failures=0;
+
+        while(
+            running &&
+            myGeneration===generation &&
+            done<job.amount
+        ){
+            status(
+                '🟢 Бутылка '+job.id+
+                ' ('+done+'/'+job.amount+')'
+            );
+
+            const success=await useOne(
+                job.id,myGeneration
+            );
+
+            if(!running||myGeneration!==generation){
+                return;
+            }
+
+            if(success){
+                done++;
+                total++;
+                failures=0;
+
+                $('ba_done_'+job.id).textContent=done;
+            }else{
+                failures++;
+
+                if(failures>=3){
+                    stop(
+                        '⚠️ Нет подтверждения: '+job.id
+                    );
+                    return;
+                }
+
+                status(
+                    '⏳ Повторная проверка '+job.id
+                );
+            }
+
+            update();
+
+            if(running&&done<job.amount){
+                await sleep(DELAY);
+            }
+        }
+    }
+
+    if(running&&myGeneration===generation){
+        stop('✅ Все выбранные бутылки обработаны!');
+    }
+}
+
+$('ba_start').onclick=start;
+$('ba_stop').onclick=()=>stop();
+
+$('ba_close').onclick=()=>{
+    window.BottleAutoAll.destroy();
+};
+
+$('ba_all').onclick=()=>{
+    TYPES.forEach(id=>{
+        if(allowed(id)&&stock(id)>0){
+            $('ba_check_'+id).checked=true;
+        }
+    });
+};
+
+$('ba_none').onclick=()=>{
+    TYPES.forEach(id=>{
+        $('ba_check_'+id).checked=false;
+    });
+};
+
+window.BottleAutoAll={
+    start,
+    stop,
+    destroy(){
+        stop();
+        ui.remove();
+        delete window.BottleAutoAll;
+    }
+};
+
+createRows();
+update();
+
+console.log(
+    '🧪 BottleAuto готов. ROM (771) исключён.'
+);
+
+})();
